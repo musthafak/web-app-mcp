@@ -1,68 +1,108 @@
+"""
+Main module for the Multi-Context Playwright (MCP) Server.
+
+This module initializes and runs the MCP server, which uses FastMCP
+to handle WebSocket connections and browser automation tools.
+"""
 import logging
+from typing import Optional
+
 from fastmcp import FastMCP
-from playwright.sync_api import sync_playwright
-from mcp_server.tools import browser_tools, page_tools, element_tools
+# sync_playwright is needed for type hinting if Playwright objects are
+# directly instantiated. Here, it's mainly for Playwright, Browser types.
+# pylint: disable=import-error
+from playwright.sync_api import (  # type: ignore [import-not-found] # noqa: E501
+    Browser,
+    BrowserContext,
+    Page,
+    Playwright,
+)
+
+from mcp_server.tools import browser_tools, element_tools, page_tools
 
 # Configure basic logging
-logging.basicConfig(level=logging.INFO)
+# TODO: Consider moving logging configuration to a separate function or module
+# for more complex setups (e.g., different levels for different modules).
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 class MCPServer(FastMCP):
+    """
+    Multi-Context Playwright Server.
+
+    Manages Playwright instances, browsers, contexts, and pages
+    to execute browser automation tasks based on tool calls.
+    """
+
     def __init__(self, *args, **kwargs):
+        """
+        Initializes the MCPServer instance.
+
+        Sets up Playwright-related attributes and registers tools.
+        """
         super().__init__(*args, **kwargs)
-        self.playwright = None # Will be initialized by launch_browser if needed
-        self.browser = None
-        self.context = None
-        self.page = None
-        logging.info("MCP Server initialized")
+        self.playwright: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
+        logger.info("MCP Server initialized")
         self._register_tools()
 
     def _register_tools(self):
-        self.register_tool("launch_browser", browser_tools.launch_browser)
-        self.register_tool("close_browser", browser_tools.close_browser)
-        self.register_tool("new_page", browser_tools.new_page)
-        self.register_tool("goto_page", page_tools.goto_page)
-        self.register_tool("capture_screenshot", page_tools.capture_screenshot)
-        self.register_tool("close_page", page_tools.close_page)
-        self.register_tool("click_element", element_tools.click_element)
-        self.register_tool("fill_element", element_tools.fill_element)
-        self.register_tool("capture_elements", element_tools.capture_elements)
-        self.register_tool("evaluate_element", element_tools.evaluate_element)
-        self.register_tool("get_element_attribute", element_tools.get_element_attribute)
-        self.register_tool("get_text_content", element_tools.get_text_content)
-        self.register_tool("wait_for_selector", element_tools.wait_for_selector)
-        logging.info("Browser, Page, and Element tools registered.")
+        """Registers all available browser automation tools."""
+        # Reversing argument order for add_tool: func first, then name.
+        self.add_tool(browser_tools.launch_browser, "launch_browser")
+        self.add_tool(browser_tools.close_browser, "close_browser")
+        self.add_tool(browser_tools.new_page, "new_page")
+        self.add_tool(page_tools.goto_page, "goto_page")
+        self.add_tool(page_tools.capture_screenshot, "capture_screenshot")
+        self.add_tool(page_tools.close_page, "close_page")
+        self.add_tool(element_tools.click_element, "click_element")
+        self.add_tool(element_tools.fill_element, "fill_element")
+        self.add_tool(element_tools.capture_elements, "capture_elements")
+        self.add_tool(element_tools.evaluate_element, "evaluate_element")
+        self.add_tool(element_tools.get_element_attribute, "get_element_attribute")
+        self.add_tool(element_tools.get_text_content, "get_text_content")
+        self.add_tool(element_tools.wait_for_selector, "wait_for_selector")
+        logger.info("Browser, Page, and Element tools registered.")
 
     def shutdown(self):
-        logging.info("MCP Server shutting down...")
-        browser_tools.close_browser(self) # Ensure browser and Playwright are closed
-        logging.info("MCP Server shutdown complete.")
+        """Gracefully shuts down the server and Playwright resources."""
+        logger.info("MCP Server shutting down...")
+        # Ensure browser and Playwright are closed.
+        # The close_browser tool is designed to handle the server instance.
+        browser_tools.close_browser(self)
+        logger.info("MCP Server shutdown complete.")
 
 
 if __name__ == "__main__":
-    host = "localhost"
-    port = 8765
+    HOST = "localhost"  # pylint: disable=invalid-name
+    PORT = 8765         # pylint: disable=invalid-name
+    # TODO: Consider making HOST/PORT configurable via env vars/CLI args.
+
     server = MCPServer()
-    
-    logging.info(f"MCP Server attempting to start on {host}:{port}")
-    
+
+    logger.info("MCP Server init %s:%s", HOST, PORT)  # Shortened more
+
     try:
         # This is where you would typically start the FastMCP server.
-        # server.run(host=host, port=port)
-        # For the purpose of this task, we'll simulate it being ready.
-        logging.info(f"MCP Server is notionally running on {host}:{port}")
-        logging.info("To test, you would interact with the server through its API (e.g., making tool calls).")
-        # Keep the main thread alive, or implement server.run() as per FastMCP's documentation.
-        # For now, we'll just log and then perform a clean shutdown.
-        # In a real application, the server would run indefinitely until a stop signal.
-        
-        # Example of using a tool if the server was actually running and receiving commands:
-        # print(server.tool_handler.execute_tool("launch_browser", {"browser_name": "chromium", "headless": True}))
-        # print(server.tool_handler.execute_tool("new_page", {}))
-        # print(server.tool_handler.execute_tool("close_browser", {}))
-
+        server.run(host=HOST, port=PORT)
+        # The following lines are for simulation if server.run() is non-blocking
+        # or for testing purposes. In a typical FastMCP setup, .run() is
+        # blocking.
+        # logger.info("MCP Server notionally running on %s:%s", HOST, PORT)
+        # logger.info(
+        #     "To test, interact with the server via its API (tool calls)."
+        # )
     except KeyboardInterrupt:
-        logging.info("Keyboard interrupt received.")
-    except Exception as e:
-        logging.error(f"An error occurred during server operation: {e}")
+        logger.info("Keyboard interrupt received. Shutting down...")
+    except Exception as e:  # pylint: disable=broad-except
+        # Broad exception for unexpected server errors.
+        # Specific errors should be handled by FastMCP or tools.
+        logger.error("Unexpected server error: %s", e, exc_info=True)
     finally:
         server.shutdown()

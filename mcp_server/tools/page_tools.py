@@ -1,69 +1,108 @@
+"""Page manipulation tools for the MCP Server."""
 import logging
-from playwright.sync_api import Page, Error
+# pylint: disable=import-error
+from playwright.sync_api import (  # type: ignore [import-not-found]
+    Page, Error as PlaywrightError
+)
 
 # Configure basic logging
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 def goto_page(mcp_server, url: str):
     """
     Navigates the current page to the specified URL.
+
+    Args:
+        mcp_server: The MCPServer instance.
+        url: The URL to navigate to.
+
+    Returns:
+        A message indicating success or failure.
     """
     if not hasattr(mcp_server, 'page') or mcp_server.page is None:
+        logger.error("goto_page called but page not initialized.")
         return "Error: Page not initialized. Call 'new_page' first."
 
     page: Page = mcp_server.page
     try:
         page.goto(url)
-        logging.info(f"Successfully navigated to {url}")
+        logger.info("Successfully navigated to %s", url)
         return f"Navigation to {url} successful."
-    except Error as e: # Playwright-specific error for navigation
-        logging.error(f"Playwright navigation error for {url}: {e}")
-        return f"Playwright navigation error to {url}: {e}"
-    except Exception as e:
-        logging.error(f"Error navigating to {url}: {e}")
+    except PlaywrightError as e:
+        logger.error(
+            "Playwright nav error for %s: %s", url, e, exc_info=True
+        )
+        return f"Playwright nav error to {url}: {e}"
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error("Error navigating to %s: %s", url, e, exc_info=True)
         return f"Error navigating to {url}: {e}"
+
 
 def capture_screenshot(mcp_server, path: str):
     """
     Captures a screenshot of the current page and saves it to the specified path.
+
+    Args:
+        mcp_server: The MCPServer instance.
+        path: The file path to save the screenshot to.
+
+    Returns:
+        A message indicating success or failure.
     """
     if not hasattr(mcp_server, 'page') or mcp_server.page is None:
+        logger.error("capture_screenshot called but page not initialized.")
         return "Error: Page not initialized. Call 'new_page' first."
 
     page: Page = mcp_server.page
     try:
         page.screenshot(path=path)
-        logging.info(f"Screenshot saved to {path}")
+        logger.info("Screenshot saved to %s", path)
         return f"Screenshot saved to {path}."
-    except Error as e: # Playwright-specific error for screenshot
-        logging.error(f"Playwright error capturing screenshot to {path}: {e}")
+    except PlaywrightError as e:
+        logger.error(
+            "Playwright error capturing screenshot to %s: %s",
+            path, e, exc_info=True
+        )
         return f"Playwright error capturing screenshot to {path}: {e}"
-    except Exception as e:
-        logging.error(f"Error capturing screenshot to {path}: {e}")
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error(
+            "Error capturing screenshot to %s: %s", path, e, exc_info=True
+        )
         # Consider if the path is valid, writable, etc.
-        return f"Error capturing screenshot to {path}: {e}. Ensure the path is valid and writable."
+        msg_part1 = f"Error capturing screenshot to {path}: {e}. "
+        msg_part2 = "Ensure path is valid/writable."
+        return msg_part1 + msg_part2
+
 
 def close_page(mcp_server):
     """
     Closes the current page.
+
+    Args:
+        mcp_server: The MCPServer instance.
+
+    Returns:
+        A message indicating success or failure.
     """
     if not hasattr(mcp_server, 'page') or mcp_server.page is None:
+        logger.info("close_page called but no active page to close.")
         return "No active page to close."
 
     page: Page = mcp_server.page
     try:
         if not page.is_closed():
             page.close()
-            logging.info("Page closed successfully.")
+            logger.info("Page closed successfully.")
         else:
-            logging.info("Page was already closed.")
-        mcp_server.page = None
+            logger.info("Page was already closed.")
+        mcp_server.page = None  # Reset the page attribute on the server
         return "Page closed successfully."
-    except Error as e: # Playwright-specific error for closing page
-        logging.error(f"Playwright error closing page: {e}")
-        mcp_server.page = None # Attempt to reset even if close fails
+    except PlaywrightError as e:
+        logger.error("Playwright error closing page: %s", e, exc_info=True)
+        mcp_server.page = None  # Attempt to reset even if close fails
         return f"Playwright error closing page: {e}"
-    except Exception as e:
-        logging.error(f"Error closing page: {e}")
-        mcp_server.page = None # Attempt to reset even if close fails
+    except Exception as e:  # pylint: disable=broad-except
+        logger.error("Error closing page: %s", e, exc_info=True)
+        mcp_server.page = None  # Attempt to reset even if close fails
         return f"Error closing page: {e}"
