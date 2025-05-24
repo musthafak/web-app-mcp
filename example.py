@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SERVER_ADDRESS = "ws://localhost:8765"
+SERVER_ADDRESS = "http://127.0.0.1:8000/sse"
 
 
 async def main():
