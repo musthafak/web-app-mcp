@@ -80,17 +80,13 @@ class MCPServer(FastMCP):
 
 
 if __name__ == "__main__":
-    HOST = "localhost"  # pylint: disable=invalid-name
-    PORT = 8765         # pylint: disable=invalid-name
-    # TODO: Consider making HOST/PORT configurable via env vars/CLI args.
-
     server = MCPServer()
 
     logger.info("MCP Server init %s:%s", HOST, PORT)  # Shortened more
 
     try:
         # This is where you would typically start the FastMCP server.
-        server.run(host=HOST, port=PORT)
+        server.run(transport="sse")
         # The following lines are for simulation if server.run() is non-blocking
         # or for testing purposes. In a typical FastMCP setup, .run() is
         # blocking.
