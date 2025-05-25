@@ -102,15 +102,83 @@ The server exposes the following tools that can be called by an MCP client (like
         ```
 
 2.  **`capture_screenshot`**
-    *   **Description**: Captures a screenshot of the current page and saves it to the specified path.
-    *   **Parameters**:
-        *   `path: str` (required). The file path where the screenshot will be saved (e.g., `"./screenshot.png"`).
+    *   **Description**: Captures a screenshot of the current page and returns it as a base64 encoded string.
+    *   **Parameters**: None.
     *   **Client Example**:
         ```python
-        await client.execute_tool("capture_screenshot", {"path": "page_image.png"})
+        base64_image = await client.execute_tool("capture_screenshot", {})
+        # To save the image, you would decode it and write to a file:
+        # import base64
+        # image_data = base64.b64decode(base64_image)
+        # with open("screenshot.png", "wb") as f:
+        #     f.write(image_data)
         ```
 
-3.  **`close_page`**
+3.  **`get_current_url`**
+    *   **Description**: Gets the current URL of the active page.
+    *   **Parameters**: None.
+    *   **Client Example**:
+        ```python
+        current_url = await client.execute_tool("get_current_url", {})
+        print(f"The current URL is: {current_url}")
+        ```
+
+4.  **`get_page_title`**
+    *   **Description**: Gets the title of the current active page.
+    *   **Parameters**: None.
+    *   **Client Example**:
+        ```python
+        page_title = await client.execute_tool("get_page_title", {})
+        print(f"The page title is: {page_title}")
+        ```
+
+5.  **`capture_area_snapshot`**
+    *   **Description**: Captures the W3C Accessibility Object Model (AOM) representation of the current page or a specific element's subtree. The AOM is a structured dictionary that can be large and complex.
+    *   **Parameters**:
+        *   `selector: str` (optional, default: `None`). The CSS selector for the root element of the accessibility tree snapshot. If `None` or an empty string, the snapshot is taken for the entire page.
+    *   **Returns**: A dictionary representing the AOM, or an error message string.
+    *   **Client Example**:
+        ```python
+        # Capture AOM for the entire page
+        page_aom = await client.execute_tool("capture_area_snapshot", {})
+        
+        # Capture AOM for a specific element (e.g., the main content area)
+        element_aom = await client.execute_tool("capture_area_snapshot", {"selector": "main#content"})
+        
+        if isinstance(element_aom, dict):
+            print(f"Role of the element: {element_aom.get('role')}")
+        else:
+            print(element_aom) # Error message
+        ```
+
+6.  **`wait_for_navigation`**
+    *   **Description**: Waits for the page to navigate to a new URL or for a specific load state to be reached. This is typically used after an action that triggers navigation (e.g., clicking a link or submitting a form).
+    *   **Parameters**:
+        *   `url: str` (optional, default: `None`). A glob pattern, regex pattern (e.g., `"/articles/.*"`), or full URL to match the target URL. If `None`, waits for the next navigation to any URL.
+        *   `wait_until: str` (optional, default: `None`). The load state to wait for. Common values: `'load'` (default if not specified), `'domcontentloaded'`, `'networkidle'` (waits until no network connections for 500ms), `'commit'`.
+        *   `timeout: float` (optional, default: `None`). Maximum time to wait for navigation in seconds. If `None`, Playwright's default (typically 30 seconds) is used.
+    *   **Returns**: A success message like "Navigation completed. Final URL: [URL]" or an error message if timeout or other issues occur.
+    *   **Client Example**:
+        ```python
+        # After clicking a link that should go to an article page:
+        # await client.execute_tool("click_element", {"selector": "a.article-link"})
+        
+        # Wait for navigation to any URL, using default load state and timeout
+        # status = await client.execute_tool("wait_for_navigation", {})
+        
+        # Wait for navigation to a URL matching a regex, until DOM is loaded, with 10s timeout
+        status = await client.execute_tool(
+            "wait_for_navigation",
+            {
+                "url": "**/articles/.*",
+                "wait_until": "domcontentloaded",
+                "timeout": 10.0
+            }
+        )
+        print(status)
+        ```
+
+7.  **`close_page`**
     *   **Description**: Closes the current active page.
     *   **Parameters**: None.
     *   **Client Example**:
@@ -131,7 +199,16 @@ The server exposes the following tools that can be called by an MCP client (like
         await client.execute_tool("click_element", {"selector": "button.primary"})
         ```
 
-2.  **`fill_element`**
+2.  **`hover_element`**
+    *   **Description**: Hovers the mouse cursor over the element specified by the CSS selector. This can trigger actions like dropdown menus or tooltips.
+    *   **Parameters**:
+        *   `selector: str` (required). The CSS selector for the element to hover over.
+    *   **Client Example**:
+        ```python
+        await client.execute_tool("hover_element", {"selector": "nav #user-menu"})
+        ```
+
+3.  **`fill_element`**
     *   **Description**: Fills an input field (specified by selector) with the provided text.
     *   **Parameters**:
         *   `selector: str` (required). The CSS selector for the input element.
@@ -151,7 +228,7 @@ The server exposes the following tools that can be called by an MCP client (like
         # elements_data will be a list of dictionaries
         ```
 
-4.  **`evaluate_element`**
+5.  **`evaluate_element`**
     *   **Description**: Finds the first element matching the selector and evaluates a JavaScript expression in its context.
     *   **Parameters**:
         *   `selector: str` (required). The CSS selector for the element.
@@ -161,7 +238,32 @@ The server exposes the following tools that can be called by an MCP client (like
         value = await client.execute_tool("evaluate_element", {"selector": "#myInput", "expression": "el => el.value"})
         ```
 
-5.  **`get_element_attribute`**
+5.  **`get_element_html`**
+    *   **Description**: Gets the `outerHTML` of the first element matching the selector, with options to clean and truncate the HTML.
+    *   **Parameters**:
+        *   `selector: str` (required). The CSS selector for the element.
+        *   `char_limit: int` (optional, default: `None`). If set, truncates the HTML to this character limit.
+        *   `remove_scripts: bool` (optional, default: `False`). If `True`, removes `<script>` tags.
+        *   `remove_comments: bool` (optional, default: `False`). If `True`, removes HTML comments.
+        *   `remove_styles: bool` (optional, default: `False`). If `True`, removes `<style>` and `<link rel="stylesheet">` tags.
+    *   **Client Example**:
+        ```python
+        # Get full HTML for an element
+        html_content = await client.execute_tool("get_element_html", {"selector": "div.article-content"})
+        
+        # Get HTML, remove scripts and styles, and truncate to 500 chars
+        cleaned_html = await client.execute_tool(
+            "get_element_html",
+            {
+                "selector": "main#content",
+                "char_limit": 500,
+                "remove_scripts": True,
+                "remove_styles": True
+            }
+        )
+        ```
+
+7.  **`get_element_attribute`**
     *   **Description**: Gets the value of a specified attribute for the first element matching the selector.
     *   **Parameters**:
         *   `selector: str` (required). The CSS selector for the element.
@@ -171,7 +273,21 @@ The server exposes the following tools that can be called by an MCP client (like
         link_href = await client.execute_tool("get_element_attribute", {"selector": "a.mylink", "attribute_name": "href"})
         ```
 
-6.  **`get_text_content`**
+8.  **`get_element_bounding_box`**
+    *   **Description**: Gets the bounding box (x, y, width, height) of the first element matching the selector.
+    *   **Parameters**:
+        *   `selector: str` (required). The CSS selector for the element.
+    *   **Returns**: A dictionary like `{'x': float, 'y': float, 'width': float, 'height': float}` or an error message.
+    *   **Client Example**:
+        ```python
+        bounding_box = await client.execute_tool("get_element_bounding_box", {"selector": "img#main-logo"})
+        if isinstance(bounding_box, dict):
+            print(f"Logo position: x={bounding_box['x']}, y={bounding_box['y']}")
+        else:
+            print(bounding_box) # Error message
+        ```
+
+9.  **`get_text_content`**
     *   **Description**: Gets the `textContent` of the first element matching the selector.
     *   **Parameters**:
         *   `selector: str` (required). The CSS selector for the element.
@@ -180,7 +296,7 @@ The server exposes the following tools that can be called by an MCP client (like
         text = await client.execute_tool("get_text_content", {"selector": "h1"})
         ```
 
-7.  **`wait_for_selector`**
+10. **`wait_for_selector`**
     *   **Description**: Waits for an element matching the CSS selector to appear on the page within a specified timeout.
     *   **Parameters**:
         *   `selector: str` (required). The CSS selector to wait for.
@@ -205,7 +321,7 @@ An example client script, `example.py`, is provided in the root of this project.
     ```bash
     python example.py
     ```
-    The client will connect to the server, launch a browser, navigate to `example.com`, extract the heading text, take a screenshot (`example_screenshot.png`), and then close everything down.
+    The client will connect to the server, launch a browser, navigate to `example.com`, extract the heading text, take a screenshot (which can be saved as `example_screenshot.png`), and then close everything down.
 
 ## Running Tests
 

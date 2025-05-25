@@ -1,9 +1,11 @@
 """Manages browser automation tools using Playwright."""
 
+import base64
 import logging
 
 # pylint: disable=import-outside-toplevel
 # pylint: disable=import-error
+from bs4 import BeautifulSoup, Comment
 from playwright.async_api import (
     Error as PlaywrightError,
 )  # type: ignore [import-not-found]
@@ -242,78 +244,226 @@ class ToolManager:
             logger.error("Error navigating to %s: %s", url, e, exc_info=True)
             return f"Error navigating to {url}: {e}"
 
-    async def capture_area_snapshot(self, selector: str):
+    async def capture_area_snapshot(self, selector: str = None):
         """
-        Captures a area snapshot of the area specified by selector on the current page.
+        Captures the W3C Accessibility Object Model (AOM) representation of the
+        current page or a specific element's subtree.
 
-        Aria snapshots provide a YAML representation of the accessibility tree of the given selector.
+        If a `selector` is provided, the snapshot is taken for the element
+        identified by that selector. This corresponds to Playwright's
+        `page.accessibility.snapshot(root=element_handle)` where `root`
+        specifies the root element for the snapshot. If the element is not found,
+        an error is returned.
+
+        If `selector` is `None` or an empty string, the snapshot is taken for the
+        entire page.
 
         Args:
-            selector: The CSS selector for the area to capture.
+            selector: Optional CSS selector for the root element of the accessibility
+                      tree snapshot. If None, captures the whole page.
 
         Returns:
-            A message indicating success or failure.
+            A dictionary representing the AOM, or an error message string.
+            The dictionary can be large and complex.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error(
+                "capture_area_snapshot called but page not initialized or closed."
+            )
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        snapshot = None
+        try:
+            if selector:
+                element_handle = await page.query_selector(selector)
+                if not element_handle:
+                    logger.warning(
+                        "Element not found for selector in capture_area_snapshot: %s",
+                        selector,
+                    )
+                    return f"Error: Element not found for selector: {selector}"
+                # Ensure element is visible for a meaningful snapshot
+                await element_handle.scroll_into_view_if_needed()
+                snapshot = await page.accessibility.snapshot(root=element_handle)
+                logger.info(
+                    "Captured AOM snapshot for element with selector: %s", selector
+                )
+            else:
+                snapshot = await page.accessibility.snapshot()
+                logger.info("Captured AOM snapshot for the entire page.")
+            
+            return snapshot
+        except PlaywrightError as e:
+            log_msg = (
+                f"Playwright error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
+            )
+            logger.error(log_msg, exc_info=True)
+            return f"Playwright error capturing AOM snapshot: {e}"
+        except Exception as e:
+            log_msg = (
+                f"Generic error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
+            )
+            logger.error(log_msg, exc_info=True)
+            return f"Error capturing AOM snapshot: {e}"
+
+    async def capture_screenshot(self):
+        """
+        Captures a screenshot of the current page and returns it as a base64
+        encoded string.
+
+        Returns:
+            A base64 encoded string of the screenshot, or an error message.
         """
         if not hasattr(self, "page") or self.page is None:
-            logger.error("capture_area_snapshot called but page not initialized.")
+            logger.error("capture_screenshot called but page not initialized.")
             return "Error: Page not initialized. Call 'new_page' first."
+
         page: Page = self.page
         try:
-            element = await page.query_selector(selector)
-            if not element:
-                logger.warning("Element not found for selector: %s", selector)
-                return f"Error: Element not found for selector: {selector}"
-            await element.scroll_into_view_if_needed()
-            area_snapshot = await self.page.locator(selector).aria_snapshot()
-            logger.info("Area snapshot of %s locator: \n%s", selector, area_snapshot)
-            return f"Area snapshot of {selector} locator: \n{area_snapshot}."
+            screenshot_bytes = await page.screenshot()
+            base64_image = base64.b64encode(screenshot_bytes).decode("utf-8")
+            logger.info("Screenshot captured and encoded to base64.")
+            return base64_image
         except PlaywrightError as e:
             logger.error(
-                "Playwright error capturing area snapshot for %s: %s",
-                selector,
+                "Playwright error capturing screenshot: %s",
                 e,
                 exc_info=True,
             )
-            return f"Playwright error capturing area snapshot for {selector}: {e}"
-        except Exception as e:
-            logger.error("Error capturing area snapshot of %s", selector, exc_info=True)
-            # Consider if the path is valid, writable, etc.
-            return f"Error capturing area snapshot of {selector}: {e}."
+            return f"Playwright error capturing screenshot: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error("Error capturing screenshot: %s", e, exc_info=True)
+            return f"Error capturing screenshot: {e}"
 
-    # async def capture_screenshot(self, path: str):
-    #     """
-    #     Captures a screenshot of the current page and saves it to the specified
-    #     path.
-    #
-    #     Args:
-    #         path: The file path to save the screenshot to.
-    #
-    #     Returns:
-    #         A message indicating success or failure.
-    #     """
-    #     if not hasattr(self, "page") or self.page is None:
-    #         logger.error("capture_screenshot called but page not initialized.")
-    #         return "Error: Page not initialized. Call 'new_page' first."
-    #
-    #     page: Page = self.page
-    #     try:
-    #         await page.screenshot(path=path)
-    #         logger.info("Screenshot saved to %s", path)
-    #         return f"Screenshot saved to {path}."
-    #     except PlaywrightError as e:
-    #         logger.error(
-    #             "Playwright error capturing screenshot to %s: %s",
-    #             path,
-    #             e,
-    #             exc_info=True,
-    #         )
-    #         return f"Playwright error capturing screenshot to {path}: {e}"
-    #     except Exception as e:  # pylint: disable=broad-except
-    #         logger.error("Error capturing screenshot to %s: %s", path, e, exc_info=True)
-    #         # Consider if the path is valid, writable, etc.
-    #         msg_part1 = f"Error capturing screenshot to {path}: {e}. "
-    #         msg_part2 = "Ensure path is valid/writable."
-    #         return msg_part1 + msg_part2
+    async def get_current_url(self):
+        """
+        Gets the current URL of the active page.
+
+        Returns:
+            The current URL as a string, or an error message if no page is active.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error("get_current_url called but page not initialized or closed.")
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        try:
+            current_url = page.url
+            logger.info("Retrieved current URL: %s", current_url)
+            return current_url
+        except PlaywrightError as e:
+            logger.error("Playwright error getting current URL: %s", e, exc_info=True)
+            return f"Playwright error getting current URL: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error("Error getting current URL: %s", e, exc_info=True)
+            return f"Error getting current URL: {e}"
+
+    async def get_page_title(self):
+        """
+        Gets the title of the current active page.
+
+        Returns:
+            The page title as a string, or an error message if no page is active.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error("get_page_title called but page not initialized or closed.")
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        try:
+            title = await page.title()
+            logger.info("Retrieved page title: %s", title)
+            return title
+        except PlaywrightError as e:
+            logger.error("Playwright error getting page title: %s", e, exc_info=True)
+            return f"Playwright error getting page title: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error("Error getting page title: %s", e, exc_info=True)
+            return f"Error getting page title: {e}"
+
+    async def wait_for_navigation(
+        self, url: str = None, wait_until: str = None, timeout: float = None
+    ):
+        """
+        Waits for the page to navigate to a new URL or for a page load event to occur.
+        This is typically used after an action that causes navigation, like a click.
+
+        Args:
+            url: Optional. A glob pattern, regex pattern, or full URL to match the
+                 target URL. If not specified, waits for the next navigation to any URL.
+            wait_until: Optional. The load state to wait for. Common values include:
+                        'load': Wait for the 'load' event.
+                        'domcontentloaded': Wait for the 'DOMContentLoaded' event.
+                        'networkidle': Wait until there are no network connections for
+                                       at least 500 ms.
+                        If None, Playwright's default is used (typically 'load').
+            timeout: Optional. Maximum time to wait for navigation in seconds.
+                     If None, Playwright's default timeout (usually 30 seconds) is used.
+
+        Returns:
+            A message indicating success or failure of the navigation wait.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error(
+                "wait_for_navigation called but page not initialized or closed."
+            )
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        options = {}
+        if url is not None:
+            options["url"] = url
+        if wait_until is not None:
+            # Playwright's type hint for wait_until is Literal["load", "domcontentloaded", "networkidle", "commit"]
+            # We'll rely on the user to provide a valid string based on documentation.
+            options["wait_until"] = wait_until  # type: ignore
+        if timeout is not None:
+            options["timeout"] = timeout * 1000  # Convert seconds to milliseconds
+
+        try:
+            response = await page.wait_for_navigation(**options)
+            if response:
+                logger.info(
+                    "Successfully waited for navigation. Final URL: %s. Status: %s",
+                    response.url,
+                    response.status,
+                )
+                return f"Navigation completed. Final URL: {response.url}"
+            else: # Should not happen if wait_for_navigation resolves without error
+                logger.info("Successfully waited for navigation (no response object).")
+                return "Navigation completed (no response object)."
+
+        except PlaywrightTimeoutError as e:
+            timeout_sec = (
+                options.get("timeout", 30000) / 1000
+            )  # Use provided or default 30s
+            err_msg = (
+                f"Timeout ({timeout_sec}s) waiting for navigation "
+                f"(URL: {url}, wait_until: {wait_until}). {e}"
+            )
+            logger.warning(err_msg)
+            return err_msg
+        except PlaywrightError as e:
+            logger.error(
+                "Playwright error waiting for navigation "
+                "(URL: %s, wait_until: %s): %s",
+                url,
+                wait_until,
+                e,
+                exc_info=True,
+            )
+            return f"Playwright error waiting for navigation: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Generic error waiting for navigation "
+                "(URL: %s, wait_until: %s): %s",
+                url,
+                wait_until,
+                e,
+                exc_info=True,
+            )
+            return f"Error waiting for navigation: {e}"
 
     async def close_page(self):
         """
@@ -379,6 +529,56 @@ class ToolManager:
             logger.error("Error clicking %s: %s", selector, e, exc_info=True)
             return f"Error clicking {selector}: {e}"  # Shortened
 
+    async def hover_element(self, selector: str):
+        """
+        Hovers over the element specified by the selector on the current page.
+
+        Args:
+            selector: The CSS selector for the element to hover over.
+
+        Returns:
+            A message indicating success or failure.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error("hover_element called but page not initialized or closed.")
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        try:
+            element = await page.query_selector(selector)
+            if not element:
+                logger.warning(
+                    "Element not found for selector in hover_element: %s", selector
+                )
+                return f"Error: Element not found for selector: {selector}"
+
+            await element.hover(timeout=3000)  # Default timeout for hover is often short
+            logger.info("Successfully hovered over element %s.", selector)
+            return f"Successfully hovered over element {selector}."
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Timeout hovering over element %s. Element might not be "
+                "visible or interactable for hover.",
+                selector,
+            )
+            return (
+                f"Timeout hovering over {selector}. Element may not be "
+                "visible or interactable for hover."
+            )
+        except PlaywrightError as e:
+            logger.error(
+                "Playwright error hovering over element %s: %s",
+                selector,
+                e,
+                exc_info=True,
+            )
+            return f"Playwright error hovering over {selector}: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Error hovering over element %s: %s", selector, e, exc_info=True
+            )
+            return f"Error hovering over element {selector}: {e}"
+
     async def fill_element(self, selector: str, text: str):
         """
         Fills the input field specified by selector with text on the current
@@ -417,6 +617,123 @@ class ToolManager:
         except Exception as e:  # pylint: disable=broad-except
             logger.error("Error filling %s: %s", selector, e, exc_info=True)
             return f"Error filling {selector}: {e}"  # Shortened
+
+    async def select_option(
+        self,
+        selector: str,
+        option_value: str = None,
+        option_label: str = None,
+        option_index: int = None,
+    ):
+        """
+        Selects an option within a <select> element identified by the selector.
+        Exactly one of `option_value`, `option_label`, or `option_index` must be provided.
+
+        Args:
+            selector: The CSS selector for the <select> element.
+            option_value: The value attribute of the option to select.
+            option_label: The visible text (label) of the option to select.
+            option_index: The 0-based index of the option to select.
+
+        Returns:
+            A message indicating success and the value(s) of the selected option(s),
+            or an error message.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error("select_option called but page not initialized or closed.")
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        provided_options = sum(
+            o is not None for o in [option_value, option_label, option_index]
+        )
+        if provided_options == 0:
+            return "Error: No option specifier provided. Use option_value, option_label, or option_index."
+        if provided_options > 1:
+            return "Error: Multiple option specifiers provided. Only one of option_value, option_label, or option_index should be used."
+
+        page: Page = self.page
+        try:
+            element = await page.query_selector(selector)
+            if not element:
+                logger.warning(
+                    "Select element not found for selector: %s", selector
+                )
+                return f"Error: Select element not found for selector: {selector}"
+
+            select_arg = {}
+            selection_method_used = ""
+            if option_value is not None:
+                select_arg = {"value": option_value}
+                selection_method_used = f"value '{option_value}'"
+            elif option_label is not None:
+                select_arg = {"label": option_label}
+                selection_method_used = f"label '{option_label}'"
+            elif option_index is not None:
+                select_arg = {"index": option_index}
+                selection_method_used = f"index {option_index}"
+            
+            # Type hint for select_arg to match Playwright's expectations
+            # (Union[str, ElementHandle, Dict, List[str], List[ElementHandle], List[Dict], None])
+            # In our case, it's Dict[str, Union[str, int]]
+            selected_values = await element.select_option(select_arg, timeout=5000) # type: ignore
+
+            if not selected_values:
+                # This can happen if the option wasn't found by Playwright, though it often throws an error.
+                # Or if the select_option call itself didn't result in any change.
+                logger.warning(
+                    "No option was selected for element %s using %s. "
+                    "The option might not exist or match the criteria.",
+                    selector,
+                    selection_method_used,
+                )
+                return (
+                    f"Error: Could not select option using {selection_method_used} "
+                    f"for element {selector}. Option may not exist or match."
+                )
+
+            logger.info(
+                "Successfully selected option(s) with value(s): %s for element %s using %s.",
+                selected_values,
+                selector,
+                selection_method_used,
+            )
+            return (
+                f"Successfully selected option(s) with value(s): {selected_values} "
+                f"for element {selector} using {selection_method_used}."
+            )
+        except PlaywrightTimeoutError:
+            logger.warning(
+                "Timeout selecting option for element %s using %s.",
+                selector,
+                selection_method_used,
+            )
+            return (
+                f"Timeout selecting option for {selector} using {selection_method_used}. "
+                "Option may not be visible or interactable."
+            )
+        except PlaywrightError as e:
+            # Playwright might throw a generic Error if the option is not found
+            # e.g., "Error: Element.selectOption: Element is not a <select> element"
+            # or "Error: Element.selectOption: No option found for specified value(s)"
+            logger.error(
+                "Playwright error selecting option for element %s using %s: %s",
+                selector,
+                selection_method_used,
+                e,
+                exc_info=True,
+            )
+            return (
+                f"Playwright error selecting option for {selector} using {selection_method_used}: {e}"
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Generic error selecting option for element %s using %s: %s",
+                selector,
+                selection_method_used,
+                e,
+                exc_info=True,
+            )
+            return f"Error selecting option for element {selector} using {selection_method_used}: {e}"
 
     async def capture_elements(self, selector: str):
         """
@@ -527,6 +844,147 @@ class ToolManager:
             return (  # Shortened
                 f"Error evaluating expr '{expression}' on {selector}: {e}"
             )
+
+    async def get_element_html(
+        self,
+        selector: str,
+        char_limit: int = None,
+        remove_scripts: bool = False,
+        remove_comments: bool = False,
+        remove_styles: bool = False,
+    ):
+        """
+        Gets the outerHTML of the first element matching selector, with optional cleanup and truncation.
+
+        Args:
+            selector: The CSS selector for the element.
+            char_limit: Optional character limit to truncate the HTML.
+            remove_scripts: If True, removes <script> tags from the HTML.
+            remove_comments: If True, removes HTML comments.
+            remove_styles: If True, removes <style> and <link rel="stylesheet"> tags.
+
+        Returns:
+            The processed outerHTML of the element, or an error message.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error("get_element_html called but page not initialized or closed.")
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        try:
+            element = await page.query_selector(selector)
+            if not element:
+                logger.warning(
+                    "Element not found for selector in get_element_html: %s", selector
+                )
+                return f"Error: Element not found for selector: {selector}"
+
+            outer_html = await element.evaluate("el => el.outerHTML")
+
+            if remove_scripts or remove_comments or remove_styles:
+                soup = BeautifulSoup(outer_html, "html.parser")
+
+                if remove_scripts:
+                    for script_tag in soup.find_all("script"):
+                        script_tag.decompose()
+
+                if remove_comments:
+                    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+                        comment.extract()
+                
+                if remove_styles:
+                    for style_tag in soup.find_all("style"):
+                        style_tag.decompose()
+                    for link_tag in soup.find_all("link", rel="stylesheet"):
+                        link_tag.decompose()
+                
+                outer_html = str(soup)
+
+            if char_limit is not None and len(outer_html) > char_limit:
+                outer_html = outer_html[:char_limit] + "..."
+                logger.info(
+                    "HTML for selector %s truncated to %s characters.",
+                    selector,
+                    char_limit,
+                )
+
+            logger.info(
+                "Retrieved HTML for element %s (options applied).", selector
+            )
+            return outer_html
+        except PlaywrightError as e:
+            logger.error(
+                "Playwright error getting HTML for element %s: %s",
+                selector,
+                e,
+                exc_info=True,
+            )
+            return f"Playwright error getting HTML for {selector}: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Error getting HTML for element %s: %s", selector, e, exc_info=True
+            )
+            return f"Error getting HTML for element {selector}: {e}"
+
+    async def get_element_bounding_box(self, selector: str):
+        """
+        Gets the bounding box (x, y, width, height) of the first element matching selector.
+
+        Args:
+            selector: The CSS selector for the element.
+
+        Returns:
+            A dictionary with 'x', 'y', 'width', and 'height' of the element,
+            or an error message if the element is not found or not visible.
+        """
+        if not hasattr(self, "page") or self.page is None or self.page.is_closed():
+            logger.error(
+                "get_element_bounding_box called but page not initialized or closed."
+            )
+            return "Error: Page not initialized or has been closed. Call 'new_page' first."
+
+        page: Page = self.page
+        try:
+            element = await page.query_selector(selector)
+            if not element:
+                logger.warning(
+                    "Element not found for selector in get_element_bounding_box: %s",
+                    selector,
+                )
+                return f"Error: Element not found for selector: {selector}"
+
+            bounding_box = await element.bounding_box()
+
+            if bounding_box is None:
+                logger.warning(
+                    "Element %s found, but it has no bounding box (e.g., display:none).",
+                    selector,
+                )
+                return (
+                    f"Error: Element {selector} found, but it is not visible or "
+                    "has no dimensions."
+                )
+            
+            logger.info(
+                "Retrieved bounding box for element %s: %s", selector, bounding_box
+            )
+            return bounding_box
+        except PlaywrightError as e:
+            logger.error(
+                "Playwright error getting bounding box for element %s: %s",
+                selector,
+                e,
+                exc_info=True,
+            )
+            return f"Playwright error getting bounding box for {selector}: {e}"
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(
+                "Error getting bounding box for element %s: %s",
+                selector,
+                e,
+                exc_info=True,
+            )
+            return f"Error getting bounding box for element {selector}: {e}"
 
     async def get_element_attribute(self, selector: str, attribute_name: str):
         """
