@@ -1,3 +1,4 @@
 fastmcp
 playwright
 beautifulsoup4
+pytest-asyncio
