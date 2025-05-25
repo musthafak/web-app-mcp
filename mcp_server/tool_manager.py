@@ -37,7 +37,9 @@ class ToolManager:
     async def launch_browser(
         self, browser_name: str = "chromium", headless: bool = False
     ):
-        logger.info(f"Executing tool: launch_browser with browser_name='{browser_name}', headless={headless}")
+        logger.info(
+            f"Executing tool: launch_browser with browser_name='{browser_name}', headless={headless}"
+        )
         """
         Launches the specified browser and creates a new browser context.
 
@@ -101,7 +103,7 @@ class ToolManager:
                 logger.info(f"Tool launch_browser completed. Result: {result}")
                 return result
 
-            self.context = await self.browser.new_context()
+            self.context = await self.browser.new_context(ignore_https_errors=True)
             mode = "in headless mode" if headless else "with UI"
             logger.info("%s browser launched successfully %s.", browser_name, mode)
             result = f"{browser_name} browser launched successfully."
@@ -311,7 +313,9 @@ class ToolManager:
             logger.error(
                 "capture_area_snapshot called but page not initialized or closed."
             )
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool capture_area_snapshot completed. Result: {result}")
             return result
 
@@ -326,7 +330,9 @@ class ToolManager:
                         selector,
                     )
                     result = f"Error: Element not found for selector: {selector}"
-                    logger.info(f"Tool capture_area_snapshot completed. Result: {result}")
+                    logger.info(
+                        f"Tool capture_area_snapshot completed. Result: {result}"
+                    )
                     return result
                 # Ensure element is visible for a meaningful snapshot
                 await element_handle.scroll_into_view_if_needed()
@@ -337,33 +343,35 @@ class ToolManager:
             else:
                 snapshot = await page.accessibility.snapshot()
                 logger.info("Captured AOM snapshot for the entire page.")
-            logger.info(f"Tool capture_area_snapshot completed. Result: {snapshot}") # Potentially large
+            logger.info(
+                f"Tool capture_area_snapshot completed. Result: {snapshot}"
+            )  # Potentially large
             return snapshot
         except PlaywrightError as e:
-            log_msg = (
-                f"Playwright error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
-            )
+            log_msg = f"Playwright error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
             logger.error(log_msg, exc_info=True)
             result = f"Playwright error capturing AOM snapshot: {e}"
             logger.info(f"Tool capture_area_snapshot completed. Result: {result}")
             return result
         except Exception as e:
-            log_msg = (
-                f"Generic error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
-            )
+            log_msg = f"Generic error capturing AOM snapshot for selector {selector if selector else 'page'}: {e}"
             logger.error(log_msg, exc_info=True)
             result = f"Error capturing AOM snapshot: {e}"
             logger.info(f"Tool capture_area_snapshot completed. Result: {result}")
             return result
 
-    async def capture_screenshot(self):
+    async def capture_screenshot(self, full_page: bool = False):
         logger.info("Executing tool: capture_screenshot")
         """
         Captures a screenshot of the current page and returns it as a base64
         encoded string.
 
+        Args:
+            full_page: If True, captures the entire page. If False, captures only
+                   the visible viewport.
+
         Returns:
-            A base64 encoded string of the screenshot, or an error message.
+            A base64 encoded string details of the screenshot, or an error message.
         """
         if not hasattr(self, "page") or self.page is None:
             logger.error("capture_screenshot called but page not initialized.")
@@ -373,11 +381,16 @@ class ToolManager:
 
         page: Page = self.page
         try:
-            screenshot_bytes = await page.screenshot()
+            screenshot_bytes = await page.screenshot(full_page=full_page)
             base64_image = base64.b64encode(screenshot_bytes).decode("utf-8")
             logger.info("Screenshot captured and encoded to base64.")
             logger.info("Tool capture_screenshot completed. Result: <base64_image>")
-            return base64_image
+            return {
+                "type": "image",
+                "media_type": "image/png",
+                "data": base64_image,
+                "encoding": "base64",
+            }
         except PlaywrightError as e:
             logger.error(
                 "Playwright error capturing screenshot: %s",
@@ -403,7 +416,9 @@ class ToolManager:
         """
         if not hasattr(self, "page") or self.page is None or self.page.is_closed():
             logger.error("get_current_url called but page not initialized or closed.")
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool get_current_url completed. Result: {result}")
             return result
 
@@ -434,7 +449,9 @@ class ToolManager:
         """
         if not hasattr(self, "page") or self.page is None or self.page.is_closed():
             logger.error("get_page_title called but page not initialized or closed.")
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool get_page_title completed. Result: {result}")
             return result
 
@@ -458,7 +475,9 @@ class ToolManager:
     async def wait_for_navigation(
         self, url: str = None, wait_until: str = None, timeout: float = None
     ):
-        logger.info(f"Executing tool: wait_for_navigation with url='{url}', wait_until='{wait_until}', timeout={timeout}")
+        logger.info(
+            f"Executing tool: wait_for_navigation with url='{url}', wait_until='{wait_until}', timeout={timeout}"
+        )
         """
         Waits for the page to navigate to a new URL or for a page load event to occur.
         This is typically used after an action that causes navigation, like a click.
@@ -482,7 +501,9 @@ class ToolManager:
             logger.error(
                 "wait_for_navigation called but page not initialized or closed."
             )
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool wait_for_navigation completed. Result: {result}")
             return result
 
@@ -498,7 +519,7 @@ class ToolManager:
             options["timeout"] = timeout * 1000  # Convert seconds to milliseconds
 
         try:
-            response = await page.wait_for_navigation(**options)
+            response = await page.wait_for_url(**options)
             if response:
                 logger.info(
                     "Successfully waited for navigation. Final URL: %s. Status: %s",
@@ -508,7 +529,7 @@ class ToolManager:
                 result = f"Navigation completed. Final URL: {response.url}"
                 logger.info(f"Tool wait_for_navigation completed. Result: {result}")
                 return result
-            else: # Should not happen if wait_for_navigation resolves without error
+            else:  # Should not happen if wait_for_navigation resolves without error
                 logger.info("Successfully waited for navigation (no response object).")
                 result = "Navigation completed (no response object)."
                 logger.info(f"Tool wait_for_navigation completed. Result: {result}")
@@ -539,8 +560,7 @@ class ToolManager:
             return result
         except Exception as e:  # pylint: disable=broad-except
             logger.error(
-                "Generic error waiting for navigation "
-                "(URL: %s, wait_until: %s): %s",
+                "Generic error waiting for navigation " "(URL: %s, wait_until: %s): %s",
                 url,
                 wait_until,
                 e,
@@ -647,7 +667,9 @@ class ToolManager:
         """
         if not hasattr(self, "page") or self.page is None or self.page.is_closed():
             logger.error("hover_element called but page not initialized or closed.")
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool hover_element completed. Result: {result}")
             return result
 
@@ -662,7 +684,9 @@ class ToolManager:
                 logger.info(f"Tool hover_element completed. Result: {result}")
                 return result
 
-            await element.hover(timeout=3000)  # Default timeout for hover is often short
+            await element.hover(
+                timeout=3000
+            )  # Default timeout for hover is often short
             logger.info("Successfully hovered over element %s.", selector)
             result = f"Successfully hovered over element {selector}."
             logger.info(f"Tool hover_element completed. Result: {result}")
@@ -698,7 +722,9 @@ class ToolManager:
             return result
 
     async def fill_element(self, selector: str, text: str):
-        logger.info(f"Executing tool: fill_element with selector='{selector}', text='{text}'")
+        logger.info(
+            f"Executing tool: fill_element with selector='{selector}', text='{text}'"
+        )
         """
         Fills the input field specified by selector with text on the current
         page.
@@ -754,7 +780,9 @@ class ToolManager:
         option_label: str = None,
         option_index: int = None,
     ):
-        logger.info(f"Executing tool: select_option with selector='{selector}', option_value='{option_value}', option_label='{option_label}', option_index={option_index}")
+        logger.info(
+            f"Executing tool: select_option with selector='{selector}', option_value='{option_value}', option_label='{option_label}', option_index={option_index}"
+        )
         """
         Selects an option within a <select> element identified by the selector.
         Exactly one of `option_value`, `option_label`, or `option_index` must be provided.
@@ -771,7 +799,9 @@ class ToolManager:
         """
         if not hasattr(self, "page") or self.page is None or self.page.is_closed():
             logger.error("select_option called but page not initialized or closed.")
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool select_option completed. Result: {result}")
             return result
 
@@ -791,9 +821,7 @@ class ToolManager:
         try:
             element = await page.query_selector(selector)
             if not element:
-                logger.warning(
-                    "Select element not found for selector: %s", selector
-                )
+                logger.warning("Select element not found for selector: %s", selector)
                 result = f"Error: Select element not found for selector: {selector}"
                 logger.info(f"Tool select_option completed. Result: {result}")
                 return result
@@ -809,11 +837,11 @@ class ToolManager:
             elif option_index is not None:
                 select_arg = {"index": option_index}
                 selection_method_used = f"index {option_index}"
-            
+
             # Type hint for select_arg to match Playwright's expectations
             # (Union[str, ElementHandle, Dict, List[str], List[ElementHandle], List[Dict], None])
             # In our case, it's Dict[str, Union[str, int]]
-            selected_values = await element.select_option(select_arg, timeout=5000) # type: ignore
+            selected_values = await element.select_option(select_arg, timeout=5000)  # type: ignore
 
             if not selected_values:
                 # This can happen if the option wasn't found by Playwright, though it often throws an error.
@@ -866,9 +894,7 @@ class ToolManager:
                 e,
                 exc_info=True,
             )
-            result = (
-                f"Playwright error selecting option for {selector} using {selection_method_used}: {e}"
-            )
+            result = f"Playwright error selecting option for {selector} using {selection_method_used}: {e}"
             logger.info(f"Tool select_option completed. Result: {result}")
             return result
         except Exception as e:  # pylint: disable=broad-except
@@ -931,7 +957,9 @@ class ToolManager:
             logger.info(
                 "Captured details for %d elements matching %s.", len(results), selector
             )
-            logger.info(f"Tool capture_elements completed. Result: {results}") # Potentially large
+            logger.info(
+                f"Tool capture_elements completed. Result: {results}"
+            )  # Potentially large
             return results
         except PlaywrightError as e:
             logger.error(
@@ -952,7 +980,9 @@ class ToolManager:
             return result
 
     async def evaluate_element(self, selector: str, expression: str):
-        logger.info(f"Executing tool: evaluate_element with selector='{selector}', expression='{expression}'")
+        logger.info(
+            f"Executing tool: evaluate_element with selector='{selector}', expression='{expression}'"
+        )
         """
         Finds the first element matching selector and evaluates a JavaScript
         expression in its context.
@@ -979,7 +1009,9 @@ class ToolManager:
                 logger.info(f"Tool evaluate_element completed. Result: {result}")
                 return result
 
-            eval_result = await element.evaluate(expression) # Renamed to avoid conflict
+            eval_result = await element.evaluate(
+                expression
+            )  # Renamed to avoid conflict
             logger.info(
                 "Evaluated expression '%s' on element %s. Result: %s",
                 expression,
@@ -996,7 +1028,9 @@ class ToolManager:
                 e,
                 exc_info=True,
             )
-            result = f"PWE evaluating expr '{expression}' on {selector}: {e}"  # Shortened
+            result = (
+                f"PWE evaluating expr '{expression}' on {selector}: {e}"  # Shortened
+            )
             logger.info(f"Tool evaluate_element completed. Result: {result}")
             return result
         except Exception as e:  # pylint: disable=broad-except
@@ -1021,7 +1055,9 @@ class ToolManager:
         remove_comments: bool = False,
         remove_styles: bool = False,
     ):
-        logger.info(f"Executing tool: get_element_html with selector='{selector}', char_limit={char_limit}, remove_scripts={remove_scripts}, remove_comments={remove_comments}, remove_styles={remove_styles}")
+        logger.info(
+            f"Executing tool: get_element_html with selector='{selector}', char_limit={char_limit}, remove_scripts={remove_scripts}, remove_comments={remove_comments}, remove_styles={remove_styles}"
+        )
         """
         Gets the outerHTML of the first element matching selector, with optional cleanup and truncation.
 
@@ -1037,7 +1073,9 @@ class ToolManager:
         """
         if not hasattr(self, "page") or self.page is None or self.page.is_closed():
             logger.error("get_element_html called but page not initialized or closed.")
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool get_element_html completed. Result: {result}")
             return result
 
@@ -1053,6 +1091,8 @@ class ToolManager:
                 return result
 
             outer_html = await element.evaluate("el => el.outerHTML")
+            if outer_html is None:
+                outer_html = ""
 
             if remove_scripts or remove_comments or remove_styles:
                 soup = BeautifulSoup(outer_html, "html.parser")
@@ -1062,15 +1102,17 @@ class ToolManager:
                         script_tag.decompose()
 
                 if remove_comments:
-                    for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+                    for comment in soup.find_all(
+                        string=lambda text: isinstance(text, Comment)
+                    ):
                         comment.extract()
-                
+
                 if remove_styles:
                     for style_tag in soup.find_all("style"):
                         style_tag.decompose()
                     for link_tag in soup.find_all("link", rel="stylesheet"):
                         link_tag.decompose()
-                
+
                 outer_html = str(soup)
 
             if char_limit is not None and len(outer_html) > char_limit:
@@ -1081,10 +1123,10 @@ class ToolManager:
                     char_limit,
                 )
 
+            logger.info("Retrieved HTML for element %s (options applied).", selector)
             logger.info(
-                "Retrieved HTML for element %s (options applied).", selector
+                f"Tool get_element_html completed. Result: <html_content_length={len(outer_html)}>"
             )
-            logger.info(f"Tool get_element_html completed. Result: <html_content_length={len(outer_html)}>")
             return outer_html
         except PlaywrightError as e:
             logger.error(
@@ -1105,7 +1147,9 @@ class ToolManager:
             return result
 
     async def get_element_bounding_box(self, selector: str):
-        logger.info(f"Executing tool: get_element_bounding_box with selector='{selector}'")
+        logger.info(
+            f"Executing tool: get_element_bounding_box with selector='{selector}'"
+        )
         """
         Gets the bounding box (x, y, width, height) of the first element matching selector.
 
@@ -1120,7 +1164,9 @@ class ToolManager:
             logger.error(
                 "get_element_bounding_box called but page not initialized or closed."
             )
-            result = "Error: Page not initialized or has been closed. Call 'new_page' first."
+            result = (
+                "Error: Page not initialized or has been closed. Call 'new_page' first."
+            )
             logger.info(f"Tool get_element_bounding_box completed. Result: {result}")
             return result
 
@@ -1133,7 +1179,9 @@ class ToolManager:
                     selector,
                 )
                 result = f"Error: Element not found for selector: {selector}"
-                logger.info(f"Tool get_element_bounding_box completed. Result: {result}")
+                logger.info(
+                    f"Tool get_element_bounding_box completed. Result: {result}"
+                )
                 return result
 
             bounding_box = await element.bounding_box()
@@ -1147,13 +1195,17 @@ class ToolManager:
                     f"Error: Element {selector} found, but it is not visible or "
                     "has no dimensions."
                 )
-                logger.info(f"Tool get_element_bounding_box completed. Result: {result}")
+                logger.info(
+                    f"Tool get_element_bounding_box completed. Result: {result}"
+                )
                 return result
-            
+
             logger.info(
                 "Retrieved bounding box for element %s: %s", selector, bounding_box
             )
-            logger.info(f"Tool get_element_bounding_box completed. Result: {bounding_box}")
+            logger.info(
+                f"Tool get_element_bounding_box completed. Result: {bounding_box}"
+            )
             return bounding_box
         except PlaywrightError as e:
             logger.error(
@@ -1177,7 +1229,9 @@ class ToolManager:
             return result
 
     async def get_element_attribute(self, selector: str, attribute_name: str):
-        logger.info(f"Executing tool: get_element_attribute with selector='{selector}', attribute_name='{attribute_name}'")
+        logger.info(
+            f"Executing tool: get_element_attribute with selector='{selector}', attribute_name='{attribute_name}'"
+        )
         """
         Gets the value of an attribute for the first element matching selector.
 
@@ -1221,7 +1275,9 @@ class ToolManager:
                 selector,
                 attribute_value,
             )
-            logger.info(f"Tool get_element_attribute completed. Result: {attribute_value}")
+            logger.info(
+                f"Tool get_element_attribute completed. Result: {attribute_value}"
+            )
             return attribute_value
         except PlaywrightError as e:
             logger.error(
@@ -1297,7 +1353,9 @@ class ToolManager:
             return result
 
     async def wait_for_selector(self, selector: str, timeout: int = 30000):
-        logger.info(f"Executing tool: wait_for_selector with selector='{selector}', timeout={timeout}")
+        logger.info(
+            f"Executing tool: wait_for_selector with selector='{selector}', timeout={timeout}"
+        )
         """
         Waits for an element matching selector to appear on the page
         within the given timeout.

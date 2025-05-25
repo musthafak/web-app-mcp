@@ -75,7 +75,9 @@ class MCPServer(FastMCP):
         self.add_tool(self.tool_manager.get_current_url, "get_current_url")
         self.add_tool(self.tool_manager.get_page_title, "get_page_title")
         self.add_tool(self.tool_manager.get_element_html, "get_element_html")
-        self.add_tool(self.tool_manager.get_element_bounding_box, "get_element_bounding_box")
+        self.add_tool(
+            self.tool_manager.get_element_bounding_box, "get_element_bounding_box"
+        )
         self.add_tool(self.tool_manager.wait_for_navigation, "wait_for_navigation")
         logger.info("Browser, Page, and Element tools registered.")
 
