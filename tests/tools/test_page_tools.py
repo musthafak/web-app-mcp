@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, AsyncMock, patch, ANY
 from playwright.async_api import Error as PlaywrightError, Page
 # For navigation timeout
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from unittest.mock import PropertyMock # Added for mocking properties
 from mcp_server.tool_manager import ToolManager  # Import ToolManager
 
 
@@ -14,6 +15,9 @@ def tool_manager_with_page():
     """Provides a ToolManager instance with a mocked page."""
     tm = ToolManager()
     tm.page = AsyncMock(spec=Page)  # Mock the page attribute
+    tm.page.is_closed.return_value = False # Key Fix
+    # Mock accessibility object
+    tm.page.accessibility = AsyncMock()
     return tm
 
 
@@ -78,10 +82,13 @@ async def test_capture_screenshot_success(tool_manager_with_page):
     # path = "/screenshots/test.png" # Path is no longer an argument
     tool_manager_with_page.page.screenshot.return_value = b"screenshot_bytes"
     result = await tool_manager_with_page.capture_screenshot()
-    tool_manager_with_page.page.screenshot.assert_called_once_with()
-    # assert f"Screenshot saved to {path}." in result # Path is no longer part of the success message
-    assert isinstance(result, str) # Should be base64 string
-    assert len(result) > 0
+    # ToolManager.capture_screenshot calls page.screenshot with full_page=False by default
+    tool_manager_with_page.page.screenshot.assert_called_once_with(full_page=False)
+    assert isinstance(result, dict)
+    assert result['type'] == "image"
+    assert result['media_type'] == "image/png"
+    assert result['encoding'] == "base64"
+    assert result['data'] == "c2NyZWVuc2hvdF9ieXRlcw==" # base64 of "screenshot_bytes"
 
 
 @pytest.mark.asyncio
@@ -171,13 +178,14 @@ async def test_close_page_general_exception_on_close(tool_manager_with_page):
 @pytest.mark.asyncio
 async def test_capture_area_snapshot_full_page_success(tool_manager_with_page):
     """Test successful full page snapshot."""
-    tool_manager_with_page.page.screenshot.return_value = b"full_page_bytes"
+    # capture_area_snapshot uses accessibility.snapshot, not screenshot
+    expected_snapshot_data = {"role": "WebArea", "name": "Page"}
+    tool_manager_with_page.page.accessibility.snapshot.return_value = expected_snapshot_data
     result = await tool_manager_with_page.capture_area_snapshot()
-    tool_manager_with_page.page.screenshot.assert_called_once_with(
-        full_page=True
-    )
-    assert isinstance(result, str)
-    assert len(result) > 0
+    # When no selector, root is not passed, it defaults to None inside snapshot.
+    # The actual call from tool_manager is page.accessibility.snapshot()
+    tool_manager_with_page.page.accessibility.snapshot.assert_called_once_with()
+    assert result == expected_snapshot_data
 
 
 @pytest.mark.asyncio
@@ -185,17 +193,20 @@ async def test_capture_area_snapshot_element_success(tool_manager_with_page):
     """Test successful element snapshot."""
     selector = "#my-element"
     mock_element = AsyncMock()
-    mock_element.screenshot.return_value = b"element_bytes"
+    # scroll_into_view_if_needed is part of ElementHandle, not directly on the mock_element unless specified
+    mock_element.scroll_into_view_if_needed = AsyncMock() 
     tool_manager_with_page.page.query_selector.return_value = mock_element
+    
+    expected_snapshot_data = {"role": "button", "name": "Submit"}
+    # accessibility.snapshot is called on the page, with root=element_handle
+    tool_manager_with_page.page.accessibility.snapshot.return_value = expected_snapshot_data
 
     result = await tool_manager_with_page.capture_area_snapshot(selector)
 
     tool_manager_with_page.page.query_selector.assert_called_once_with(selector)
     mock_element.scroll_into_view_if_needed.assert_awaited_once()
-    mock_element.screenshot.assert_called_once_with()
-    assert isinstance(result, str)
-    assert "element_bytes" in result # Check if the base64 encoded string contains the original bytes representation
-    assert len(result) > 10 # Check if it's a reasonable length for base64 encoded string
+    tool_manager_with_page.page.accessibility.snapshot.assert_called_once_with(root=mock_element)
+    assert result == expected_snapshot_data
 
 
 @pytest.mark.asyncio
@@ -205,14 +216,14 @@ async def test_capture_area_snapshot_element_not_found(tool_manager_with_page):
     tool_manager_with_page.page.query_selector.return_value = None
     result = await tool_manager_with_page.capture_area_snapshot(selector)
     assert f"Error: Element not found for selector: {selector}" in result
-    tool_manager_with_page.page.screenshot.assert_not_called()
+    tool_manager_with_page.page.accessibility.snapshot.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_capture_area_snapshot_no_page(tool_manager_no_page):
     """Test snapshot when page is not initialized."""
     result = await tool_manager_no_page.capture_area_snapshot()
-    assert "Error: Page not initialized. Call 'new_page' first." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
@@ -220,17 +231,17 @@ async def test_capture_area_snapshot_page_closed(tool_manager_with_page):
     """Test snapshot when page is closed."""
     tool_manager_with_page.page.is_closed.return_value = True
     result = await tool_manager_with_page.capture_area_snapshot()
-    assert "Error: Page is closed." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
 async def test_capture_area_snapshot_playwright_error_full_page(
         tool_manager_with_page):
     """Test Playwright error during full page snapshot."""
-    tool_manager_with_page.page.screenshot.side_effect = \
+    tool_manager_with_page.page.accessibility.snapshot.side_effect = \
         PlaywrightError("Full page snapshot failed")
     result = await tool_manager_with_page.capture_area_snapshot()
-    assert "Playwright error capturing snapshot: " \
+    assert "Playwright error capturing AOM snapshot: " \
            "Full page snapshot failed" in result
 
 
@@ -240,13 +251,20 @@ async def test_capture_area_snapshot_playwright_error_element(
     """Test Playwright error during element snapshot."""
     selector = "#my-element"
     mock_element = AsyncMock()
-    mock_element.screenshot.side_effect = \
-        PlaywrightError("Element snapshot failed")
+    mock_element.scroll_into_view_if_needed = AsyncMock()
     tool_manager_with_page.page.query_selector.return_value = mock_element
+    tool_manager_with_page.page.accessibility.snapshot.side_effect = \
+        PlaywrightError("Element snapshot failed")
 
     result = await tool_manager_with_page.capture_area_snapshot(selector)
-    assert "Playwright error capturing snapshot for " \
-           f"{selector}: Element snapshot failed" in result
+    # Check that query_selector was called
+    tool_manager_with_page.page.query_selector.assert_called_once_with(selector)
+    # Check that scroll_into_view_if_needed was called on the element
+    mock_element.scroll_into_view_if_needed.assert_awaited_once()
+    # Check that snapshot was called with the root element
+    tool_manager_with_page.page.accessibility.snapshot.assert_called_once_with(root=mock_element)
+    assert "Playwright error capturing AOM snapshot: " \
+           "Element snapshot failed" in result
 
 
 # Tests for get_current_url
@@ -254,7 +272,8 @@ async def test_capture_area_snapshot_playwright_error_element(
 async def test_get_current_url_success(tool_manager_with_page):
     """Test successful retrieval of the current URL."""
     expected_url = "https://example.com/current-page"
-    tool_manager_with_page.page.url = expected_url
+    # Ensure page.url is an attribute, not a coroutine
+    tool_manager_with_page.page.url = expected_url 
     result = await tool_manager_with_page.get_current_url()
     assert result == expected_url
 
@@ -263,7 +282,7 @@ async def test_get_current_url_success(tool_manager_with_page):
 async def test_get_current_url_no_page(tool_manager_no_page):
     """Test URL retrieval when page is not initialized."""
     result = await tool_manager_no_page.get_current_url()
-    assert "Error: Page not initialized. Call 'new_page' first." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
@@ -271,7 +290,7 @@ async def test_get_current_url_page_closed(tool_manager_with_page):
     """Test URL retrieval when page is closed."""
     tool_manager_with_page.page.is_closed.return_value = True
     result = await tool_manager_with_page.get_current_url()
-    assert "Error: Page is closed." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
@@ -280,9 +299,28 @@ async def test_get_current_url_playwright_error(tool_manager_with_page):
     # In Playwright, page.url is a property, so it doesn't typically raise
     # an error on its own unless the page object itself is unusable.
     # This test simulates a scenario where accessing page properties might fail.
-    del tool_manager_with_page.page.url # Make it seem like property is missing
+    # Simulate page.url access raising an AttributeError after page is closed (or some other issue)
+    # For this, we need to ensure the initial check passes, then the attribute access fails.
+    # The current check `if not hasattr(self, "page") or self.page is None or self.page.is_closed():`
+    # already covers most cases. If page.url itself is problematic, it would be an internal Playwright state issue.
+    # The tool's try-except PlaywrightError should catch it.
+    # To simulate this specifically, we'd mock page.url to raise PlaywrightError.
+    # However, page.url is a property. Let's assume PlaywrightError can be raised during access if page is bad.
+    # The test as written (del page.url) is more like a generic Exception.
+    # Let's make it raise PlaywrightError if accessed when page is "bad" but not "closed".
+    
+    # Mock 'url' as a property that raises PlaywrightError when accessed
+    # Ensure the page object itself is an AsyncMock, as set up in the fixture
+    mock_page_instance = tool_manager_with_page.page
+    # Replace the 'url' attribute on the type of the mock_page_instance
+    # with a PropertyMock that raises an error when its getter is accessed.
+    url_property_mock = PropertyMock(side_effect=PlaywrightError("Cannot access URL"))
+    type(mock_page_instance).url = url_property_mock
+    
     result = await tool_manager_with_page.get_current_url()
-    assert "Error getting current URL: 'AsyncMock' object has no attribute 'url'" in result
+    assert "Playwright error getting current URL: Cannot access URL" in result
+    # Reset the mock to avoid interference with other tests
+    del type(mock_page_instance).url
 
 
 # Tests for get_page_title
@@ -290,7 +328,7 @@ async def test_get_current_url_playwright_error(tool_manager_with_page):
 async def test_get_page_title_success(tool_manager_with_page):
     """Test successful retrieval of the page title."""
     expected_title = "My Awesome Page"
-    tool_manager_with_page.page.title.return_value = expected_title # title() is an async method
+    tool_manager_with_page.page.title.return_value = expected_title
     result = await tool_manager_with_page.get_page_title()
     tool_manager_with_page.page.title.assert_awaited_once()
     assert result == expected_title
@@ -300,7 +338,7 @@ async def test_get_page_title_success(tool_manager_with_page):
 async def test_get_page_title_no_page(tool_manager_no_page):
     """Test title retrieval when page is not initialized."""
     result = await tool_manager_no_page.get_page_title()
-    assert "Error: Page not initialized. Call 'new_page' first." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
@@ -308,15 +346,14 @@ async def test_get_page_title_page_closed(tool_manager_with_page):
     """Test title retrieval when page is closed."""
     tool_manager_with_page.page.is_closed.return_value = True
     result = await tool_manager_with_page.get_page_title()
-    assert "Error: Page is closed." in result
-    tool_manager_with_page.page.title.assert_not_called()
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
+    tool_manager_with_page.page.title.assert_not_awaited() # Use assert_not_awaited for async mocks
 
 
 @pytest.mark.asyncio
 async def test_get_page_title_playwright_error(tool_manager_with_page):
     """Test Playwright error during title retrieval."""
-    tool_manager_with_page.page.title.side_effect = \
-        PlaywrightError("Failed to get title")
+    tool_manager_with_page.page.title.side_effect = PlaywrightError("Failed to get title")
     result = await tool_manager_with_page.get_page_title()
     assert "Playwright error getting page title: Failed to get title" in result
 
@@ -329,14 +366,16 @@ async def test_wait_for_navigation_success_specific_url(tool_manager_with_page):
     mock_response = AsyncMock() # Simulate a response object
     mock_response.status = 200
     mock_response.url = url_to_wait_for
-    tool_manager_with_page.page.wait_for_navigation.return_value = mock_response
+    # ToolManager uses page.wait_for_url
+    tool_manager_with_page.page.wait_for_url.return_value = mock_response
 
     result = await tool_manager_with_page.wait_for_navigation(
-        url=url_to_wait_for, timeout_ms=5000)
+        url=url_to_wait_for, timeout=5) # timeout in seconds
 
-    tool_manager_with_page.page.wait_for_navigation.assert_awaited_once_with(
-        url=url_to_wait_for, timeout=5000.0, wait_until=None)
-    assert f"Navigation to {url_to_wait_for} completed. Status: 200." in result
+    # Assert page.wait_for_url was called
+    tool_manager_with_page.page.wait_for_url.assert_awaited_once_with(
+        url=url_to_wait_for, timeout=5000.0) # wait_until is not passed if None
+    assert f"Navigation completed. Final URL: {url_to_wait_for}" in result
 
 
 @pytest.mark.asyncio
@@ -345,14 +384,14 @@ async def test_wait_for_navigation_success_wait_until(tool_manager_with_page):
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.url = "https://example.com/loaded"
-    tool_manager_with_page.page.wait_for_navigation.return_value = mock_response
+    tool_manager_with_page.page.wait_for_url.return_value = mock_response
 
     result = await tool_manager_with_page.wait_for_navigation(
-        wait_until='networkidle', timeout_ms=5000)
+        wait_until='networkidle', timeout=5) # timeout in seconds
 
-    tool_manager_with_page.page.wait_for_navigation.assert_awaited_once_with(
-        url=None, timeout=5000.0, wait_until='networkidle')
-    assert "Navigation (event: networkidle) completed. Status: 200. URL: https://example.com/loaded" in result
+    tool_manager_with_page.page.wait_for_url.assert_awaited_once_with(
+        wait_until='networkidle', timeout=5000.0) # url is not passed if None
+    assert f"Navigation completed. Final URL: https://example.com/loaded" in result
 
 
 @pytest.mark.asyncio
@@ -361,27 +400,29 @@ async def test_wait_for_navigation_timeout_conversion(tool_manager_with_page):
     mock_response = AsyncMock()
     mock_response.status = 200
     mock_response.url = "https://example.com/timeout-test"
-    tool_manager_with_page.page.wait_for_navigation.return_value = mock_response
+    tool_manager_with_page.page.wait_for_url.return_value = mock_response
 
-    await tool_manager_with_page.wait_for_navigation(timeout_ms=2500)
-    args, kwargs = tool_manager_with_page.page.wait_for_navigation.call_args
-    assert kwargs['timeout'] == 2500.0 # Playwright expects float milliseconds
+    await tool_manager_with_page.wait_for_navigation(timeout=2.5) # timeout in seconds
+    # ToolManager converts timeout to ms for page.wait_for_url
+    tool_manager_with_page.page.wait_for_url.assert_awaited_once_with(
+        timeout=2500.0) # url and wait_until are not passed if None
 
 
 @pytest.mark.asyncio
 async def test_wait_for_navigation_timeout_error(tool_manager_with_page):
     """Test timeout error during wait_for_navigation."""
-    tool_manager_with_page.page.wait_for_navigation.side_effect = \
+    tool_manager_with_page.page.wait_for_url.side_effect = \
         PlaywrightTimeoutError("Navigation timed out")
-    result = await tool_manager_with_page.wait_for_navigation(timeout_ms=100)
-    assert "Timeout waiting for navigation (100.0ms)." in result
+    result = await tool_manager_with_page.wait_for_navigation(timeout=0.1) # timeout in seconds
+    assert "Timeout (0.1s) waiting for navigation" in result 
+    assert "Navigation timed out" in result # Original error message
 
 
 @pytest.mark.asyncio
 async def test_wait_for_navigation_no_page(tool_manager_no_page):
     """Test wait_for_navigation when page is not initialized."""
     result = await tool_manager_no_page.wait_for_navigation()
-    assert "Error: Page not initialized. Call 'new_page' first." in result
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
 
 
 @pytest.mark.asyncio
@@ -389,17 +430,17 @@ async def test_wait_for_navigation_page_closed(tool_manager_with_page):
     """Test wait_for_navigation when page is closed."""
     tool_manager_with_page.page.is_closed.return_value = True
     result = await tool_manager_with_page.wait_for_navigation()
-    assert "Error: Page is closed." in result
-    tool_manager_with_page.page.wait_for_navigation.assert_not_called()
+    assert "Error: Page not initialized or has been closed. Call 'new_page' first." in result
+    tool_manager_with_page.page.wait_for_url.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_wait_for_navigation_playwright_error(tool_manager_with_page):
     """Test general Playwright error during wait_for_navigation."""
-    tool_manager_with_page.page.wait_for_navigation.side_effect = \
+    tool_manager_with_page.page.wait_for_url.side_effect = \
         PlaywrightError("Generic Playwright wait error")
     result = await tool_manager_with_page.wait_for_navigation()
-    assert "Playwright error during navigation wait: " \
+    assert "Playwright error waiting for navigation: " \
            "Generic Playwright wait error" in result
 
 
@@ -409,25 +450,24 @@ async def test_wait_for_navigation_returns_mock_response(tool_manager_with_page)
     mock_response = AsyncMock()
     mock_response.status = 201 # Non-200 status
     mock_response.url = "https://example.com/created"
-    tool_manager_with_page.page.wait_for_navigation.return_value = mock_response
+    tool_manager_with_page.page.wait_for_url.return_value = mock_response
 
     result = await tool_manager_with_page.wait_for_navigation(
         url="https://example.com/created")
-    assert "Navigation to https://example.com/created completed. " \
-           "Status: 201." in result
+    assert f"Navigation completed. Final URL: {mock_response.url}" in result
 
 
 @pytest.mark.asyncio
 async def test_wait_for_navigation_returns_none_response(tool_manager_with_page):
     """Test behavior if wait_for_navigation returns None (e.g. about:blank navs)."""
-    # Playwright's wait_for_navigation typically returns a Response object or raises an error.
+    # Playwright's wait_for_url typically returns a Response object or raises an error.
     # A None response is common for navigations to "about:blank" or similar.
-    tool_manager_with_page.page.wait_for_navigation.return_value = None
+    tool_manager_with_page.page.wait_for_url.return_value = None
     url_to_wait_for = "about:blank"
     result = await tool_manager_with_page.wait_for_navigation(url=url_to_wait_for)
-    assert f"Navigation to {url_to_wait_for} completed, but no response object was received (e.g., 'about:blank')." in result
+    assert "Navigation completed (no response object)." in result # Updated message
 
     # Test with no specific URL (general navigation event)
-    tool_manager_with_page.page.wait_for_navigation.return_value = None
+    tool_manager_with_page.page.wait_for_url.return_value = None
     result = await tool_manager_with_page.wait_for_navigation(wait_until="load")
-    assert "Navigation (event: load) completed, but no response object was received (e.g., 'about:blank')." in result
+    assert "Navigation completed (no response object)." in result # Updated message
